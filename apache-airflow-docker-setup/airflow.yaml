@@ -1,0 +1,66 @@
+x-airflow-common: 
+  &airflow-common
+  build: .
+  environment:
+    &airflow-common-env
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__WEBSERVER__SECRET_KEY: someSecretKey
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+
+  depends_on:
+      postgres:
+        condition: service_healthy
+
+name: apache-airflow
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  db-init:
+    <<: *airflow-common
+    command: "airflow db migrate"
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: 'airflow'
+      _AIRFLOW_WWW_USER_PASSWORD: 'airflow'
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: "webserver"
+    ports:
+      - "8080:8080"
+    healthcheck:
+          test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+          interval: 30s
+          timeout: 10s
+          retries: 5
+          start_period: 30s
+    volumes:
+      - ./dags:/opt/airflow/dags
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+
+  scheduler:
+    <<: *airflow-common
+    command: "scheduler"
+    ports:
+      - "9901"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./dags:/opt/airflow/dags
+
